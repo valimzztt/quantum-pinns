@@ -23,17 +23,14 @@ class NeuralNetwork(nn.Module):
         return self.net(x)
 
 model = NeuralNetwork().to(device)
-
-# Initialize Energy closer to expected range, but not exactly -0.5
-# We will update this manually via Rayleigh Quotient, so gradients here matter less
-E = torch.tensor([-0.9], dtype=torch.float32, device=device, requires_grad=True)
-
-# Optimizer for the Neural Network weights only
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-
 R_max = 20.0 # 30 is very far; 20 is sufficient for ground state
 eps = 1e-5   # Small shift to avoid div by zero
 
+# We start at -0.9. The target is -0.5. 
+E = torch.tensor([-0.9], dtype=torch.float32, device=device, requires_grad=True)
+
+# 2. CRITICAL: Add E to the optimizer
+optimizer = torch.optim.Adam(list(model.parameters()) + [E], lr=1e-3)
 def u_trial(r):
     """
     Improved Ansatz: u(r) = r * e^(-r) * NN(r)
@@ -63,57 +60,40 @@ def pde_residual(r, u, d2u, current_E):
 # Training Loop
 N_colloc = 2000 
 loss_history = []
+print("Starting training with Pure Backprop for Energy...")
 
-for epoch in range(5001): # 5000 is usually enough with this ansatz
+for epoch in range(5001):
     optimizer.zero_grad()
 
-    # --- 1. Smart Sampling ---
-    # Sample 50% of points near the nucleus (0 to 5) and 50% far away
+    # --- Standard Sampling ---
     r_near = (5.0 - eps) * torch.rand(N_colloc // 2, 1, device=device) + eps
     r_far = (R_max - 5.0) * torch.rand(N_colloc // 2, 1, device=device) + 5.0
     r_c = torch.cat([r_near, r_far], dim=0)
 
-    # --- 2. Compute Derivatives & PDE Loss ---
     u, du, d2u = get_derivatives(r_c)
-    
-    # We treat E as a constant in the loss for stability, 
-    # but we could also backprop through it.
+
+    # --- PDE Loss ---
+    # Now, E is part of the graph. 
+    # The optimizer will calculate d(Loss)/dE and nudge E to minimize the residual.
     res = pde_residual(r_c, u, d2u, E)
     loss_pde = (res**2).mean()
 
-    # --- 3. Normalization Loss ---
-    # Simple Monte Carlo integration over the sampled points
-    # Integral ~ mean(u^2) * Volume
-    # Since we sample non-uniformly, we should integrate properly, 
-    # but for penalty simply forcing mean(u^2) > 0 is often enough to prevent u=0.
-    # Let's use a fixed grid for accurate norm penalty.
+    # --- Normalization Loss ---
+    # This is now the ONLY thing stopping the network from outputting zero.
+    # We increase the weight slightly to be safe.
     r_grid = torch.linspace(eps, 10.0, 1000, device=device).view(-1, 1)
     u_grid = u_trial(r_grid)
     dr = (10.0 - eps) / 1000
     integral = torch.sum(u_grid**2) * dr
     loss_norm = (integral - 1.0)**2
 
-    # Total Loss
-    loss = loss_pde + 5.0 * loss_norm
+    loss = loss_pde + 10.0 * loss_norm # Increased weight for safety
+
     loss.backward()
     optimizer.step()
-
-    # --- 4. Update Energy (Rayleigh Quotient) ---
-    # E = <u|H|u> / <u|u>
-    # This is more robust than backprop for eigenvalues
-    if epoch % 10 == 0:
-        with torch.no_grad():
-             # H u = -0.5 u'' - (1/r) u
-             # We reuse the derivatives we calculated (detached from graph)
-             H_u = -0.5 * d2u - (1.0 / r_c) * u
-             
-             numerator = torch.sum(u * H_u)
-             denominator = torch.sum(u * u)
-             E_new = numerator / (denominator + 1e-8)
-             
-             # Soft update (moving average) to prevent oscillation
-             E.data = 0.9 * E.data + 0.1 * E_new
-             model.E_history.append(E.item())
+    
+    # Save history
+    model.E_history.append(E.item())
 
     if epoch % 500 == 0:
         print(f"Epoch {epoch} | Loss: {loss.item():.5f} | Energy: {E.item():.5f} Ha")

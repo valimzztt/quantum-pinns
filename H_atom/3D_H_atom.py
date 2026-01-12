@@ -1,125 +1,167 @@
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import numpy as np
+from torch import nn
 import matplotlib.pyplot as plt
+import numpy as np
 
-# We aim to solve the H atom in 3D dimensions
-class HydrogenPINN(nn.Module):
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using {device} device")
+
+class NeuralNetwork(nn.Module):
     def __init__(self):
-        super(HydrogenPINN, self).__init__()
-        
-        # Standard MLP: this time we take 
+        super().__init__()
+        # Input is now 3 dimensions (x, y, z)
         self.net = nn.Sequential(
-            nn.Linear(3, 32),
+            nn.Linear(3, 64),
             nn.Tanh(),
-            nn.Linear(32, 32),
+            nn.Linear(64, 64),
             nn.Tanh(),
-            nn.Linear(32, 1)
+            nn.Linear(64, 64),
+            nn.Tanh(),
+            nn.Linear(64, 1),
         )
-        
-        # This is the trainable energy parameter
-        # Random init: -1.0
-        self.E = nn.Parameter(torch.tensor([-1.0]))
+        self.E_history = [] 
 
     def forward(self, x):
-        # Calculate distance r
-        r = torch.sqrt(x[:, 0:1]**2 + x[:, 1:2]**2 + x[:, 2:3]**2 + 1e-6)
-        
-        # Ansatz: e^(-r). This helps the network drastically, but the NN
-        # still needs to learn the normalization scaling factor.
-        ansatz = torch.exp(-1.0 * r)
-        return ansatz * (1.0 + self.net(x))
+        return self.net(x)
 
-# The loss function is defined
-def physics_loss(model, x):
-    x.requires_grad = True
-    psi = model(x)
+model = NeuralNetwork().to(device)
+
+# Initialize Energy (Start near -0.5)
+E = torch.tensor([-0.6], dtype=torch.float32, device=device, requires_grad=False)
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+
+def get_r(pts):
+    # pts shape: [batch, 3] -> calculate euclidean distance
+    return torch.sqrt(torch.sum(pts**2, dim=1, keepdim=True) + 1e-8)
+
+def psi_trial(pts):
+    """
+    3D Ansatz: psi(x,y,z) = e^(-r) * NN(x,y,z)
+    We don't strictly need the 'r' prefactor here like we did in 1D radial eq
+    because the 3D wavefunction doesn't have the u(r)=r*R(r) transformation.
+    Ground state is simply e^(-r).
+    """
+    r = get_r(pts)
+    nn_out = model(pts)
+    return torch.exp(-r) * nn_out
+
+def get_derivatives_3d(pts):
+    pts.requires_grad_(True)
+    psi = psi_trial(pts)
     
-    # Kinetic Energy (Laplacian)
-    grads = torch.autograd.grad(psi, x, torch.ones_like(psi), create_graph=True)[0]
-    laplacian = 0
-    for i in range(3):
-        grad_2 = torch.autograd.grad(grads[:, i], x, torch.ones_like(grads[:, i]), create_graph=True)[0]
-        laplacian += grad_2[:, i].view(-1, 1)
-        
-    kinetic = -0.5 * laplacian
+    # First derivatives (gradient)
+    grad_psi = torch.autograd.grad(psi, pts, torch.ones_like(psi), create_graph=True)[0]
     
-    # Potential Energy (-1/r)
-    r = torch.sqrt(x[:, 0:1]**2 + x[:, 1:2]**2 + x[:, 2:3]**2 + 1e-6)
-    potential = -1.0 / r
+    # Second derivatives (Laplacian)
+    # The laplacian is the trace of the Hessian (sum of d2/dx2 + d2/dy2 + d2/dz2)
+    # We compute it by taking the divergence of the gradient
     
-    # Residual: (H - E)Psi = 0
-    residual = (kinetic + potential * psi) - (model.E * psi)
+    d2psi_dx2 = torch.autograd.grad(grad_psi[:, 0:1], pts, torch.ones_like(grad_psi[:, 0:1]), create_graph=True)[0][:, 0:1]
+    d2psi_dy2 = torch.autograd.grad(grad_psi[:, 1:2], pts, torch.ones_like(grad_psi[:, 1:2]), create_graph=True)[0][:, 1:2]
+    d2psi_dz2 = torch.autograd.grad(grad_psi[:, 2:3], pts, torch.ones_like(grad_psi[:, 2:3]), create_graph=True)[0][:, 2:3]
     
-    # Normalization Constraint (Required to fix the scale!)
-    # We penalize if the mean value of Psi^2 is not consistent with the domain volume
-    # For simplicity in this demo, we just anchor the center: Psi(0) should be approx 1/sqrt(pi) = 0.56
-    # Or simpler: Just ensure it's not zero.
-    center_point = torch.zeros(1, 3)
-    psi_center = model(center_point)
-    # Target value at origin for 1s orbital is 1/sqrt(pi) approx 0.564
-    norm_loss = (psi_center - 0.564)**2 
+    lap_psi = d2psi_dx2 + d2psi_dy2 + d2psi_dz2
     
-    return torch.mean(residual**2) + norm_loss
+    return psi, lap_psi
 
-# 
-def train_and_plot(N_f=3000, epochs=1000):
-    print(f"\n--- Training with N_f = {N_f} points ---")
+# Training Config
+N_batch = 2000
+L_box = 6.0 # Box size +/- 6.0 Bohr
+
+
+for epoch in range(5001):
+    optimizer.zero_grad()
+
+    # --- 1. Smart 3D Sampling ---
+    # 50% points in a small sphere (radius 2) around nucleus
+    # 50% points in the larger box
     
-    model = HydrogenPINN()
-    optimizer = optim.Adam(model.parameters(), lr=0.005)
+    # Gaussian sampling for core (centered at 0,0,0)
+    pts_core = torch.randn(N_batch // 2, 3, device=device) * 1.5 
     
-    # Training Loop
-    for epoch in range(epochs + 1):
-        optimizer.zero_grad()
-        
-        # Sample random points in 3D box [-5, 5]
-        # More points (N_f) = Better resolution of the space
-        inputs = (torch.rand(N_f, 3) * 10.0 - 5.0).float().requires_grad_(True)
-        
-        loss = physics_loss(model, inputs)
-        loss.backward()
-        optimizer.step()
-        
-        if epoch % 500 == 0:
-            print(f"Epoch {epoch}: Loss={loss.item():.5f}, Energy={model.E.item():.4f}")
+    # Uniform sampling for tail
+    pts_tail = (torch.rand(N_batch // 2, 3, device=device) * 2 * L_box) - L_box
+    
+    pts = torch.cat([pts_core, pts_tail], dim=0)
 
-    return model
+    # --- 2. Physics Loss ---
+    psi, lap_psi = get_derivatives_3d(pts)
+    r = get_r(pts)
+    
+    # Hamiltonian: -0.5 * Laplacian - (1/r) * psi
+    # Schrodinger: H psi = E psi  =>  H psi - E psi = 0
+    
+    H_psi = -0.5 * lap_psi - (1.0 / r) * psi
+    res = H_psi - E * psi
+    
+    loss_pde = (res**2).mean()
 
+    # --- 3. Normalization Loss ---
+    # Approximate integral over box volume L^3
+    # Integral ~ mean(psi^2) * Volume
+    # Note: This is rough because of non-uniform sampling, but sufficient to prevent psi=0
+    # For better accuracy, we'd use importance sampling weights.
+    vol = (2 * L_box)**3
+    norm_integral = torch.mean(psi**2) * vol # Very rough approximation
+    loss_norm = (norm_integral - 1.0)**2
+    
+    loss = loss_pde + 10.0 * loss_norm
+    loss.backward()
+    optimizer.step()
 
-N_f_label =  "N_f=30k"
-model_trained = train_and_plot(N_f=30000, epochs=3000)
+    # --- 4. Rayleigh Quotient Update ---
+    if epoch % 20 == 0:
+        with torch.no_grad():
+            # E = <psi|H|psi> / <psi|psi>
+            # We calculate this on the current batch
+            num = torch.sum(psi * H_psi)
+            den = torch.sum(psi * psi)
+            E_new = num / (den + 1e-8)
+            
+            # Smooth update
+            E.data = 0.9 * E.data + 0.1 * E_new
+            model.E_history.append(E.item())
 
-# Create z-axis points for evaluation
-z_vals = np.linspace(-5, 5, 200)
+    if epoch % 500 == 0:
+        print(f"Epoch {epoch} | Loss: {loss.item():.4f} | Energy: {E.item():.4f} Ha")
 
-# Create input tensor: x=0, y=0, z varies
-inputs = np.zeros((200, 3))
-inputs[:, 2] = z_vals # Set z column
-inputs_torch = torch.tensor(inputs, dtype=torch.float32)
+# =========================
+# Plotting 3D Results
+# =========================
+# We will plot a 1D slice along the z-axis (x=0, y=0) to compare with exact solution
 
-# Get Simulation Prediction
+z_plot = np.linspace(0, 8.0, 200)
+x_plot = np.zeros_like(z_plot)
+y_plot = np.zeros_like(z_plot)
+
+pts_plot = np.stack([x_plot, y_plot, z_plot], axis=1)
+pts_plot_t = torch.tensor(pts_plot, dtype=torch.float32, device=device)
+
 with torch.no_grad():
-    psi_pred = model_trained(inputs_torch).numpy().flatten()
-# probability density
-prob_density_sim = psi_pred**2
+    psi_pred = psi_trial(pts_plot_t).cpu().numpy().flatten()
 
-# Calculate Analytical Solution: Psi = (1/sqrt(pi)) * e^(-r)
-# r = |z| along the z-axis
-r_vals = np.abs(z_vals)
-psi_exact = (1.0 / np.sqrt(np.pi)) * np.exp(-r_vals)
-prob_density_exact = psi_exact**2
-plt.figure(figsize=(6, 5))
-plt.semilogy(z_vals, prob_density_sim, label='Simulation', linewidth=3, alpha=0.8)
-plt.semilogy(z_vals, prob_density_exact, '--', label='Analytical', linewidth=3)
-plt.xlabel(r'$z [a_0]$', fontsize=14)
-plt.ylabel(r'$\Psi^2 [a_0^{-3}]$', fontsize=14)
-plt.title(f'Hydrogen Density ({N_f_label} points)', fontsize=14)
-plt.ylim(1e-5, 0.5) # Match the y-limits of your image
-plt.grid(True, which="both", ls="-", alpha=0.2)
-plt.legend(fontsize=12)
-plt.tight_layout()
+# Exact 3D ground state: psi = (1/sqrt(pi)) * e^(-r)
+# Note: The normalization constant might be different depending on how the NN converged
+# so we normalize the max value to match for visual shape comparison.
+psi_exact = (1.0 / np.sqrt(np.pi)) * np.exp(-z_plot)
+
+# Normalize both to peak at 1 for shape comparison
+psi_pred_norm = psi_pred / np.max(np.abs(psi_pred))
+psi_exact_norm = psi_exact / np.max(np.abs(psi_exact))
+
+fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+
+# Energy
+ax[0].plot(np.array(model.E_history))
+ax[0].axhline(y=-0.5, color='r', linestyle='--')
+ax[0].set_title("Energy Convergence")
+ax[0].set_ylabel("Energy (Ha)")
+
+# Wavefunction Slice
+ax[1].plot(z_plot, psi_pred_norm, label="PINN Slice (x=0, y=0)")
+ax[1].plot(z_plot, psi_exact_norm, 'k--', label="Exact e^(-r)")
+ax[1].set_title("Wavefunction Cross-Section")
+ax[1].set_xlabel("z (Bohr)")
+ax[1].legend()
+
 plt.show()
