@@ -1,0 +1,38 @@
+use_case: 1D_H_atom
+training:
+  epochs: 2000
+  n_collocation: 3000     # N_f
+  learning_rate: 0.001
+  save_interval: 1000     # Print/Save every N epochs
+  num_variables: 1
+  num_components: 1
+  train_distribution: Gaussian #Hammersley
+  num_dense_layers: 2 # before it was 3
+  num_dense_nodes: 32
+  activation: tanh
+  out_dir: output
+  network: fnn
+  initializer: Glorot_uniform
+  optimizer: adam
+
+# ode, normalization
+loss_names: ['Schr_Eq', 'norm=1']
+loss_weights: [1, 1.e-2]
+losses: ['MSE', 'norm']
+
+physics:
+  E_init: -0.8          # Initial energy guess
+  E_ref: -0.5
+  # quantum numbers
+  n_quantum: 1
+  l_quantum: 0
+  m_quantum:
+
+loss_weights:
+  pde: 1.0
+  normalization: 5    # w_norm
+  energy_constraint: 100.0 # w_energy
+
+name_variables: ['r']
+name_components: ['wavefunc^2']
+show_psi_squared: True

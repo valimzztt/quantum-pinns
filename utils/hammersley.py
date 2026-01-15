@@ -1,41 +1,32 @@
+
+import torch
+import torch.nn as nn
+import matplotlib.pyplot as plt
+import numpy as np
+import time
+
 def get_hammersley_sequence(n_samples, scramble=True):
-    """
-    Generates a 2D Hammersley sequence of N points in [0, 1]^2.
+    """Generates 2D Hammersley points in [0,1]^2"""
+    # 1. Van der Corput sequence (base 2) for y-axis
+    # Efficient bit-reversal logic
+    n = np.arange(n_samples)
+    y = np.zeros(n_samples)
+    seed = n + 1 # 1-based index
+    base_inv = 0.5
+    while np.any(seed > 0):
+        y += (seed % 2) * base_inv
+        seed //= 2
+        base_inv /= 2
     
-    Args:
-        n_samples (int): Number of points to generate.
-        scramble (bool): If True, applies a random shift (Cranley-Patterson rotation).
-                         This is CRITICAL for training loops to avoid using 
-                         the exact same fixed grid every epoch.
-    """
-    # 1. Generate First Dimension (Linear i/N)
-    # We create indices 1 to N
-    idx = np.arange(1, n_samples + 1)
-    x_dim = (idx - 0.5) / n_samples  # Shifted to centers
+    # 2. Linear sequence for x-axis
+    x = (n + 0.5) / n_samples
     
-    # 2. Generate Second Dimension (Van der Corput base 2)
-    # Efficient bit-reversal logic for base 2
-    # We can use a simple loop or bitwise operations. 
-    # For < 100k points, a loop is fast enough and readable.
-    y_dim = []
-    for i in range(n_samples):
-        n = i + 1 # Use 1-based index
-        q = 0.
-        bk = 0.5 # 1/base
-        while n > 0:
-            q += (n % 2) * bk
-            n //= 2
-            bk /= 2
-        y_dim.append(q)
-    y_dim = np.array(y_dim)
+    points = np.stack([x, y], axis=1) # Shape (N, 2)
     
-    # Stack them
-    points = np.stack([x_dim, y_dim], axis=1) # Shape (N, 2)
-    
-    # 3. Scrambling (Random Shift)
-    # Without this, the points are identical every time you call the function.
+    # 3. Scrambling (Random shift to avoid fixed grid artifacts)
     if scramble:
-        shift = np.random.rand(2) # Random shift for (x, y)
-        points = (points + shift) % 1.0 # Wrap around 1.0
+        shift = np.random.rand(2)
+        points = (points + shift) % 1.0
         
     return torch.tensor(points, dtype=torch.float32)
+

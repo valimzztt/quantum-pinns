@@ -1,5 +1,5 @@
 import pandas as pd 
-from utils.benchmarking import PinnBenchmark
+from utils.benchmarking.HPinnBenchmark_3D import HPinnBenchmark3D as HPinnBenchmark
 from utils.training import train_model
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -14,10 +14,10 @@ import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
-from H_atom.H_atom_3D_energytrained import HydrogenPINN
+from H_atom_refactored.H_atom_3D import HydrogenPINN3D
 
-# 1. Setup Benchmark
-benchmark = PinnBenchmark(device='cpu', n_test=100000)
+# 1. Setup Benchmark for the 3D Hydrogen atom 
+benchmark = HPinnBenchmark(device='cpu', n_test=100000)
 results = []
 
 # We will plot all results together for better comparison 
@@ -40,14 +40,33 @@ configs = [
     (64, 2, "Deep (64, 2)"),
 ]
 
-# We define also the learning rate
-lr = 0.005 # learning rate
-epochs = 2000 
-N_f = 3000 # sampling points
+# Take all the parameters from the H_atom YAML filw
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+from utils.filemanager import load_config
+
+# We store the data in YAML files so that it will be easier to track the different parameters 
+filepath = os.path.join(parent_dir, "configs", "3D_H_atom.yaml")
+config = load_config(path=filepath)
+# Retrieve all the info from YAML file
+epochs = config['training']['epochs']
+N_f = config['training']['n_collocation'] 
+lr = config['training']['learning_rate']
+num_dense_layers =config['training']['num_dense_layers']
+num_dense_nodes = config['training']['num_dense_nodes']
+w_pde = config['loss_weights']['pde']
+w_norm = config['loss_weights']['normalization']
+w_energy = config['loss_weights']['energy_constraint']
+sampling_strategy = config['training']['train_distribution'] 
+E_ref= config['physics']['E_ref']
+E_init= config['physics']['E_init']
+initializer = config['training']['initializer']
+
 
 for width, layers, name in configs:
     print(f"Benchmarking {name}...")
-    model = HydrogenPINN(width=width, depth=layers).to('cpu')
+    model = HydrogenPINN3D(width=width, depth=layers).to('cpu')
     
     start = time.time()
     train_model(model,N_f, epochs, device='cpu', learning_rate = lr)
@@ -76,7 +95,7 @@ ax.set_title(f'Wavefunction Comparison (Epochs=2000)', fontsize=16)
 ax.grid(True, alpha=0.3)
 ax.legend(fontsize=12)
 ax.set_yscale('log') # Log scale helps see the decay in the tails
-ax.set_ylim(1e-5, 1.0) # Set limits to avoid log(0) issues
+ax.set_ylim(1e-5, 1.0) # we set the limits to avoid log(0) issues
 
 plt.tight_layout()
 plt.show()

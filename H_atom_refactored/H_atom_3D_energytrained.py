@@ -6,35 +6,50 @@ import torch.optim as optim
 import numpy as np
 import matplotlib.pyplot as plt
 import time
-import psutil
 import sys 
+from skopt.sampler import Hammersly
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+import time
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 from  utils.memory_usage import get_memory_usage
+from utils.filemanager import load_config
+
+# We store the data in YAML files so that it will be easier to track the different parameters 
+filepath = os.path.join(parent_dir, "configs", "3D_H_atom.yaml")
+config = load_config(path=filepath)
+# Retrieve all the info from YAML file
+epochs = config['training']['epochs']
+N_f = config['training']['n_collocation']
+lr = config['training']['learning_rate']
+num_dense_layers =config['training']['num_dense_layers']
+num_dense_nodes = config['training']['num_dense_nodes']
+w_pde = config['loss_weights']['pde']
+w_norm = config['loss_weights']['normalization']
+w_energy = config['loss_weights']['energy_constraint']
+sampling_strategy = config['training']['train_distribution'] 
+E_ref= config['physics']['E_ref']
+E_init= config['physics']['E_init']
+initializer = config['training']['initializer']
+normalization = config['training']['normalization']
+L_max= config['physics']['L_max']
+L_min= config['physics']['L_min']
 # We aim to solve the H atom in 3D dimensions
-class HydrogenPINN(nn.Module):
-    """ def __init__(self):
-        super(HydrogenPINN, self).__init__()
-        
-        # Standard MLP: 1 deep layer with 32 neurons
-        self.net = nn.Sequential(
-            nn.Linear(3, 64),
-            nn.Tanh(),
-            nn.Linear(64, 64),
-            nn.Tanh(),
-            nn.Linear(64, 1)
-        )
-        
-        # This is the trainable energy parameter: we tell pytorch to Treat this tensor as a weight of the model
-        # We initialize it randomly to -1 
-        self.E = nn.Parameter(torch.tensor([-1.0])) """
-    def __init__(self, width=32, depth=2):
+import torch
+import torch.nn as nn
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using {device} for H atom (3D)")
+
+class HydrogenPINN3D(nn.Module):
+    def __init__(self, width=num_dense_nodes, depth=num_dense_layers):
         super().__init__()
-        
-        # Dynamic Architecture Construction
         layers = []
-        # Input layer (3 -> width)
         layers.append(nn.Linear(3, width))
         layers.append(nn.Tanh())
         
@@ -45,11 +60,28 @@ class HydrogenPINN(nn.Module):
             
         # Output layer (width -> 1)
         layers.append(nn.Linear(width, 1))
+        
         self.net = nn.Sequential(*layers)
         
-        # This is the trainable energy parameter: we tell pytorch to Treat this tensor as a weight of the model
-        # We initialize it randomly to -1 
-        self.E = nn.Parameter(torch.tensor([-1.0])) 
+        # if Glorot, we apply the initialization function to every layer in self.net
+        if initializer == "Glorot_uniform":
+            print("Using Glorot Initialization")
+            self.net.apply(self.init_weights)
+        
+        # Trainable energy parameter
+        self.E = nn.Parameter(torch.tensor([E_init])) 
+
+    def init_weights(self, m):
+        # This function checks if a layer is a Linear layer
+        if isinstance(m, nn.Linear):
+            # Apply Xavier (Glorot) Uniform initialization to the weights
+            # Gain=1.0 is standard for Tanh, though some papers suggest 5/3 (approx 1.67)
+            torch.nn.init.xavier_uniform_(m.weight, gain=torch.nn.init.calculate_gain('tanh'))
+            
+            # Initialize biases to zero (standard practice)
+            if m.bias is not None:
+                m.bias.data.fill_(0.0)
+
     def forward(self, x):
         # Calculate distance r
         r = torch.sqrt(x[:, 0:1]**2 + x[:, 1:2]**2 + x[:, 2:3]**2 + 1e-6)
@@ -57,6 +89,9 @@ class HydrogenPINN(nn.Module):
         # still needs to learn the normalization scaling factor.
         ansatz = torch.exp(-1.0 * r)
         return ansatz * (1.0 + self.net(x))
+
+box_volume = (L_max - L_min)**3 
+N_norm = 1000 
 
 # The loss function is defined
 def physics_loss(model, x):
@@ -77,29 +112,43 @@ def physics_loss(model, x):
     # Residual: (H - E)Psi = 0
     residual = (kinetic + potential * psi) - (model.E * psi)
     
-    # Normalization Constraint (Required to fix the scale!)
-    # We penalize if the mean value of Psi^2 is not consistent with the domain volume
-    # For simplicity in this demo, we just anchor the center: Psi(0) should be approx 1/sqrt(pi) = 0.56
-    # Or simpler: Just ensure it's not zero.
-    center_point = torch.zeros(1, 3)
-    psi_center = model(center_point)
-    # Target value at origin for 1s orbital is 1/sqrt(pi) approx 0.564
-    norm_loss = (psi_center - 0.564)**2 
-    
+    # Point anchoring 
+    if normalization == "Point_Anchoring":
+        center_point = torch.zeros(1, 3)
+        psi_center = model(center_point)
+        # value of origin for 1s orbital isapprox 0.564
+        norm_loss = (psi_center - 0.564)**2 
+    else: 
+        # Should this be inside or outside of the loop
+        x_norm = (torch.rand(N_norm, 3, device=device) * (L_max - L_min)) + L_min
+        # Calculate Psi on uniform points regardless of what sampling strategy you used
+        psi_norm = model(x_norm)
+        # Monte Carlo Integral, which Volume*mn(Psi^2)
+        integral_approx = box_volume*torch.mean(psi_norm**2)
+        norm_loss = (integral_approx - 1.0)**2
+
     return torch.mean(residual**2) + norm_loss
 
+
 def train(N_f, epochs):
-    print(f"\n--- Training with N_f = {N_f} points ---")
-    model = HydrogenPINN(width=32, depth=2).to('cpu')
-    optimizer = optim.Adam(model.parameters(), lr=0.005)
+    print(f"\nTraining with N_f = {N_f} points")
+    print(f"Sampling Strategy: {sampling_strategy} ---")
     
-    # Training Loop
+    model = HydrogenPINN3D(width=num_dense_nodes, depth=num_dense_layers).to('cpu')
+    optimizer = optim.Adam(model.parameters(), lr=lr)
     for epoch in range(epochs + 1):
         optimizer.zero_grad()
-        # Sample random points in 3D box [-5, 5]
-        # More points (N_f) = Better resolution of the space
-        inputs = (torch.rand(N_f, 3) * 10.0 - 5.0).float().requires_grad_(True)
-        
+        if sampling_strategy == "Hammersley":
+            sampler = Hammersly(min_skip=1, max_skip=1000)
+            # tHE domain of the sampler (3 dimensions, 0 to 1)
+            space = [(0.0, 1.0)] * 3 
+            raw_points = sampler.generate(space, N_f)
+            h_points = torch.tensor(raw_points, dtype=torch.float32)
+            inputs = (h_points * 10.0 - 5.0).requires_grad_(True)
+        else:
+            # The default is a standard Pseudo-Random Uniform Sampling
+            inputs = (torch.rand(N_f, 3) * 10.0 - 5.0).float().requires_grad_(True)
+            
         loss = physics_loss(model, inputs)
         loss.backward()
         optimizer.step()
@@ -112,8 +161,8 @@ def train(N_f, epochs):
 if __name__ == "__main__":
     print(f"Initial Memory: {get_memory_usage():.2f} MB")
     start_time = time.time()
-    N_f_label =  "N_f=3k"
-    model_trained = train(N_f=3000, epochs=1000)
+    N_f_label =  "N_f= " + str(N_f)
+    model_trained = train(N_f=N_f, epochs=epochs)
 
     # Create z-axis points for evaluation
     z_vals = np.linspace(-5, 5, 200)
@@ -126,12 +175,10 @@ if __name__ == "__main__":
     # Get Simulation Prediction
     with torch.no_grad():
         psi_pred = model_trained(inputs_torch).numpy().flatten()
-    # probability density
-    prob_density_sim = psi_pred**2
+    prob_density_sim = psi_pred**2     # probability density
 
     # Calculate Analytical Solution: Psi = (1/sqrt(pi)) * e^(-r)
-    # r = |z| along the z-axis
-    r_vals = np.abs(z_vals)
+    r_vals = np.abs(z_vals)     # r = |z| along the z-axis
     psi_exact = (1.0 / np.sqrt(np.pi)) * np.exp(-r_vals)
     prob_density_exact = psi_exact**2
     plt.figure(figsize=(6, 5))
@@ -145,36 +192,25 @@ if __name__ == "__main__":
     plt.legend(fontsize=12)
     plt.tight_layout()
     plt.show()
-
-    print(f"Current CPU Tensor Memory: {torch.cuda.memory_allocated('cpu') / 1024**2:.2f} MB")
-
-    # Plot the wavefunction squared as a function of x and y
-    # 1. Create a 2D grid in the x-y plane at z=0
-    L_plot = 10.0 # Range from -10 to 10
+    print(f"Final Memory: {get_memory_usage():.2f} MB")
+    #  Create a 2D grid in the x-y plane at z=0
+    L_plot = 10.0 
     N_grid = 200 
-
     x = np.linspace(-L_plot, L_plot, N_grid)
     y = np.linspace(-L_plot, L_plot, N_grid)
     X, Y = np.meshgrid(x, y)
     Z = np.zeros_like(X) # z is 0 everywhere on this slice
-    # 2. Flatten grid and convert to tensor for the network
-    pts_grid = np.stack([X.flatten(), Y.flatten(), Z.flatten()], axis=1)
+    pts_grid = np.stack([X.flatten(), Y.flatten(), Z.flatten()], axis=1)  # Flatten grid and convert to tensor for the network
     pts_grid_t = torch.tensor(pts_grid, dtype=torch.float32)
-
-    # 3. Predict Psi on the grid
+    # Predict Psi on the grid 
     model_trained.eval() # Set to evaluation mode
     with torch.no_grad():
         # Get psi predictions
         psi_pred_flat = model_trained(pts_grid_t).numpy().flatten()
-        # Calculate Probability Density |Psi|^2
         prob_density_flat = psi_pred_flat**2
-        
-        # Reshape back to 2D grid for plotting
-        prob_density_2d = prob_density_flat.reshape(N_grid, N_grid)
+        prob_density_2d = prob_density_flat.reshape(N_grid, N_grid) # Reshape back to 2D grid 
 
-    # 4. Take Log10 for better visualization (like the reference image)
-    # Add a small epsilon to avoid log(0)
-    log_prob = np.log10(prob_density_2d + 1e-10)
+    log_prob = np.log10(prob_density_2d + 1e-10) # Add a small epsilon to avoid log(0
     # Plots 
     fig, ax = plt.subplots(figsize=(8, 6))
     cax = ax.imshow(log_prob, extent=[-L_plot, L_plot, -L_plot, L_plot], 
@@ -186,18 +222,6 @@ if __name__ == "__main__":
     ax.set_ylabel('y [a₀]', fontsize=18, fontweight='bold')
     ax.set_title('Hydrogen 1s Probability Density Slice (z=0)', fontsize=14)
     ax.tick_params(axis='both', which='major', labelsize=14)
-
     plt.tight_layout()
     plt.show()
-
-
-    model_trained = train_and_plot(N_f=3000, epochs=1000)
-
-    end_time = time.time()
-    final_memory = get_memory_usage()
-
-    print("="*40)
-    print(f"Training Duration: {end_time - start_time:.2f} seconds")
-    print(f"Peak Memory (Approx): {final_memory:.2f} MB")
-    print("="*40)
 

@@ -1,0 +1,42 @@
+use_case: 3D_H_atom
+training:
+  epochs: 2000
+  n_collocation: 3000     # N_f
+  learning_rate: 0.001
+  save_interval: 1000  
+  num_variables: 1
+  num_components: 1
+  train_distribution: Gaussian
+  num_dense_layers: 3
+  num_dense_nodes: 32
+  activation: tanh
+  out_dir: output
+  network: fnn
+  initializer: Glorot uniform
+  optimizer: adam
+  normalization: Monte_Carlo
+
+# ode, normalization
+loss_names: ['Schr_Eq', 'norm=1']
+loss_weights: [1, 1.e-2]
+losses: ['MSE', 'norm']
+
+physics:
+  E_init: -0.8            # Initial energy guess
+  E_ref: -0.5 
+  # quantum numbers
+  n_quantum: 1
+  l_quantum: 0
+  m_quantum:
+  L_min: -10.0
+  L_max: 10.0 # define the computational domain the same way Paolo did
+
+
+loss_weights:
+  pde: 1.0
+  normalization: 10.0     # w_norm
+  energy_constraint: 100.0 # w_energy
+
+name_variables: ['r']
+name_components: ['wavefunc^2']
+show_psi_squared: True

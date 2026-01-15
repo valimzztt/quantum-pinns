@@ -1,9 +1,8 @@
 import torch
 import numpy as np
-import time
 
 
-class PinnBenchmark:
+class H2PlusPinnBenchmark:
     def __init__(self, device='cpu', n_test=50000, box_size=10.0):
         self.device = device
         self.box_size = box_size

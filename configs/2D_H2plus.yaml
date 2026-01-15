@@ -1,0 +1,43 @@
+use_case: 2D_H2plus
+training:
+  epochs: 5000
+  n_collocation: 5000     # N_f
+  learning_rate: 0.001
+  save_interval: 1000   
+  num_variables: 1
+  num_components: 1
+  train_distribution: Hammersley
+  epoch_period: 1_000
+  resample_period: 100_000
+  decay: inverse time
+  decay_steps: 500
+  decay_rate: 0.5
+  num_dense_layers: 3
+  num_dense_nodes: 32
+  activation: tanh
+  out_dir: output
+  network: fnn
+  initializer: Glorot uniform
+  optimizer: adam
+
+# ode, normalization
+loss_names: ['Schr_Eq', 'norm=1']
+loss_weights: [1, 1.e-2]
+losses: ['MSE', 'norm']
+
+physics:
+  R_dist: 1.0             # Internuclear distance (2 * Z_pos)
+  E_ref: -1.1             
+  E_init: -0.6            # Initial energy guess for the energy
+
+
+loss_weights:
+  pde: 1.0
+  normalization: 10.0     # w_norm
+  energy_constraint: 100.0 # w_energy
+
+name_variables: ['r','z' ]
+name_components: ['wavefunc^2']
+show_psi_squared: True
+min_components: [1.e-5]
+max_components: [1.0]
