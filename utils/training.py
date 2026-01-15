@@ -19,11 +19,6 @@ def physics_loss(model, x):
     
     # Residual: (H - E)Psi = 0
     residual = (kinetic + potential * psi) - (model.E * psi)
-    
-    # Normalization Constraint (Required to fix the scale!)
-    # We penalize if the mean value of Psi^2 is not consistent with the domain volume
-    # For simplicity in this demo, we just anchor the center: Psi(0) should be approx 1/sqrt(pi) = 0.56
-    # Or simpler: Just ensure it's not zero.
     center_point = torch.zeros(1, 3)
     psi_center = model(center_point)
     # Target value at origin for 1s orbital is 1/sqrt(pi) approx 0.564
@@ -36,8 +31,6 @@ def train_model(model,N_f, epochs, device='cpu', learning_rate = 0.005):
     Trains a given model instance and returns the final loss.
     """
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    # Pre-calculate box volume for normalization (L=6.0)
-    # Training Loop
     for epoch in range(epochs + 1):
         optimizer.zero_grad()
         # Sample random points in 3D box [-5, 5]

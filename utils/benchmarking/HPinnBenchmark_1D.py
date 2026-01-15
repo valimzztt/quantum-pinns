@@ -4,12 +4,9 @@ class HPinnBenchmark1D:
         self.device = device
         self.max_r = max_r
         # We start by generating a fixed test set (1D radial)
-        # 1. GENERATE FIXED TEST SET (1D Radial)
-        # Core: Half-Normal distribution (Gaussian folded at 0)
         pts_core = torch.abs(torch.randn(n_test // 2, 1, device=device)) * 2.0
         # Tail: Uniform distribution from 0 to max_r
         pts_tail = torch.rand(n_test // 2, 1, device=device) * max_r
-
         self.test_r, _ = torch.sort(torch.cat([pts_core, pts_tail], dim=0), dim=0)         # Sort them just for cleaner plotting
         self.test_r = torch.clamp(self.test_r, min=1e-6)
         # Exact Radial Wavefunction Psi(r) = 2 * exp(-r)

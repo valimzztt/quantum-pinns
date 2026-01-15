@@ -164,20 +164,17 @@ if __name__ == "__main__":
     N_f_label =  "N_f= " + str(N_f)
     model_trained = train(N_f=N_f, epochs=epochs)
 
-    # Create z-axis points for evaluation
     z_vals = np.linspace(-5, 5, 200)
-
-    # Create input tensor: x=0, y=0, z varies
+    #input tensor: x=0, y=0, z varies
     inputs = np.zeros((200, 3))
     inputs[:, 2] = z_vals # Set z column
     inputs_torch = torch.tensor(inputs, dtype=torch.float32)
 
-    # Get Simulation Prediction
     with torch.no_grad():
         psi_pred = model_trained(inputs_torch).numpy().flatten()
     prob_density_sim = psi_pred**2     # probability density
 
-    # Calculate Analytical Solution: Psi = (1/sqrt(pi)) * e^(-r)
+    # Analytical Solution: Psi = (1/sqrt(pi)) * e^(-r)
     r_vals = np.abs(z_vals)     # r = |z| along the z-axis
     psi_exact = (1.0 / np.sqrt(np.pi)) * np.exp(-r_vals)
     prob_density_exact = psi_exact**2
@@ -202,7 +199,6 @@ if __name__ == "__main__":
     Z = np.zeros_like(X) # z is 0 everywhere on this slice
     pts_grid = np.stack([X.flatten(), Y.flatten(), Z.flatten()], axis=1)  # Flatten grid and convert to tensor for the network
     pts_grid_t = torch.tensor(pts_grid, dtype=torch.float32)
-    # Predict Psi on the grid 
     model_trained.eval() # Set to evaluation mode
     with torch.no_grad():
         # Get psi predictions

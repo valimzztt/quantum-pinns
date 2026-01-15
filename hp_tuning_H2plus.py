@@ -40,12 +40,9 @@ L_max= config['physics']['L_max']
 L_min= config['physics']['L_min']
 
 
-
-# Define the PinnBechmark 
 benchmark = HPinnBenchmark(device='cpu', n_test=100000)
 results = []
 
-# We will plot all results together for better comparison 
 fig, ax = plt.subplots(figsize=(10, 6))
 z_vals = np.linspace(-6, 6, 300)
 inputs_z = np.zeros((300, 3))
@@ -72,7 +69,7 @@ N_f = 3000 # sampling points
 
 for width, layers, name in configs:
     print(f"Benchmarking {name}...")
-    model = HydrogenPINN(width=width, depth=layers).to('cpu')
+    model = H2PlusPINN3D(width=width, depth=layers).to('cpu')
     
     start = time.time()
     train_model(model,N_f, epochs, device='cpu', learning_rate = lr)

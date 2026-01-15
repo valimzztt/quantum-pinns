@@ -88,19 +88,17 @@ for width, layers, name in configs:
         # Plot this model's curve
         ax.plot(z_vals, prob_density, linewidth=2, alpha=0.8, label=f"{name}")
 
-# 3. Finalize Plot
 ax.set_xlabel(r'$z \ [a_0]$', fontsize=14)
 ax.set_ylabel(r'$|\psi|^2$', fontsize=14)
 ax.set_title(f'Wavefunction Comparison (Epochs=2000)', fontsize=16)
 ax.grid(True, alpha=0.3)
 ax.legend(fontsize=12)
 ax.set_yscale('log') # Log scale helps see the decay in the tails
-ax.set_ylim(1e-5, 1.0) # we set the limits to avoid log(0) issues
+ax.set_ylim(1e-5, 1.0) 
 
 plt.tight_layout()
 plt.show()
 
-# We will also print the result section for each architecture
 df = pd.DataFrame(results)
 print("\nFinal Benchmark Results:")
 print(df.sort_values(by="L2_Error_Psi")[["Architecture", "L2_Error_Psi", "Abs_Error_E", "Time_Sec", "Final_Energy", "Params"]])

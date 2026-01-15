@@ -17,7 +17,6 @@ config = load_config(filepath)
 epochs = config['training']['epochs']
 N_f = config['training']['n_collocation'] 
 
-# 1. Setup Benchmark
 benchmark = HPinnBenchmark(device='cpu', n_test=100000, max_r=15.0)
 results = []
 histories = [] # Store energy history for plotting
@@ -33,11 +32,9 @@ u_exact = 2.0 * r_vals * np.exp(-r_vals)
 prob_exact = u_exact**2
 ax[1].plot(r_vals, prob_exact, 'k--', linewidth=2.5, label='Analytical (Exact)')
 
-# --- Architectures / Energies Loop ---
 fixed_width = 32
 fixed_depth = 2
 
-# List of initial energies
 energy_configs = [
     (-0.1, "E_init = -0.1"),
     (-0.5, "E_init = -0.5 (Exact)"),
@@ -49,7 +46,7 @@ for e_start, name in energy_configs:
     print(f"Benchmarking with {name}...")
     # Initialize 
     model = HydrogenPINN1D(width=fixed_width, depth=fixed_depth).to('cpu')
-    model.E = torch.nn.Parameter(torch.tensor([e_start], dtype=torch.float32))
+    model.E = torch.nn.Parameter(torch.tensor([e_start], dtype=torch.float32)) # overwrite init energy!
 
     start = time.time()
     train1D(model, N_f, epochs) 

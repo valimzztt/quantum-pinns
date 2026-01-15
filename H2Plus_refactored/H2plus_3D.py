@@ -105,7 +105,7 @@ def psi_trial(model, x, y, z):
     d1, d2 = compute_distances_3d(x, y, z)
     # LCAO Ansatz 
     lcao = torch.exp(-d1) + torch.exp(-d2)
-    
+
     # Concatenate inputs for NN: shape (N, 3)
     inputs = torch.cat([x, y, z], dim=1)
     nn_out = model(inputs)
@@ -130,29 +130,29 @@ def physics_loss(model, x, y, z, epoch):
     psi = psi_trial(model, x, y, z)
     lap_psi = laplacian_3d(psi, x, y, z)
     d1, d2 = compute_distances_3d(x, y, z)
-    V = -1.0/d1 - 1.0/d2
+    V = -1.0/d1 -1.0/d2
     
     # Residual
-    res = -0.5 * lap_psi + (V - model.E) * psi
+    res= -0.5 * lap_psi + (V - model.E) * psi
     loss_pde = (res**2).mean()
-    
+
     # Norm Penalty
-    volume = (L_max - L_min)**3  
+    volume = (L_max -L_min)**3  
     n_norm = 2000 
-    x_u = (torch.rand(n_norm, 1, device=x.device) * (L_max - L_min)) + L_min
-    y_u = (torch.rand(n_norm, 1, device=x.device) * (L_max - L_min)) + L_min
-    z_u = (torch.rand(n_norm, 1, device=x.device) * (L_max - L_min)) + L_min
+    x_u =(torch.rand(n_norm, 1, device=x.device)*(L_max - L_min))+L_min
+    y_u =(torch.rand(n_norm, 1, device=x.device)*(L_max - L_min))+L_min
+    z_u =(torch.rand(n_norm, 1, device=x.device)*(L_max - L_min))+L_min
 
     psi_u = psi_trial(model, x_u, y_u, z_u)
-    # Monte Carlo Integral: V * Mean(psi^2)
-    integral = volume * torch.mean(psi_u**2)
-    if epoch % 100  == 0: print(integral)
+    # Monte Carlo Integral: V*Mean(psi^2)
+    integral=volume*torch.mean(psi_u**2)
+    if epoch % 100  == 0:print(integral)
     loss_norm = (integral - 1.0)**2
     
     # Energy Constraint
     loss_energy = torch.relu(model.E - E_ref)  
-    if epoch == 2000: current_w_energy = 0.0  # Schedule weights (optional)
-    loss = loss_pde + w_norm * loss_norm + current_w_energy * loss_energy
+    if epoch == 2000: current_w_energy = 0.0 
+    loss = loss_pde + w_norm*loss_norm + current_w_energy * loss_energy
     return loss 
 
 def train_3D(model, N_f, epochs):

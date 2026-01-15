@@ -7,10 +7,8 @@ class H2PlusPinnBenchmark:
         self.device = device
         self.box_size = box_size
         
-        # 1. GENERATE FIXED TEST SET
-        # We create these ONCE. All models will be tested on these exact same points.
+        # GENERATE FIXED TEST SET. All models will be tested on these exact same points.
         # We use a mix of near-field and far-field to be fair.
-        
         # 50% points in core (r < 2)
         pts_core = torch.randn(n_test // 2, 3, device=device) * 1.5
         
@@ -18,8 +16,7 @@ class H2PlusPinnBenchmark:
         pts_tail = (torch.rand(n_test // 2, 3, device=device) * 2 * box_size) - box_size
         
         self.test_pts = torch.cat([pts_core, pts_tail], dim=0)
-        
-        # 2. COMPUTE EXACT SOLUTION ONCE
+    
         # Ground Truth Hydrogen 1s: psi = (1/sqrt(pi)) * exp(-r)
         r = torch.sqrt(torch.sum(self.test_pts**2, dim=1, keepdim=True))
         self.psi_exact = (1.0 / np.sqrt(np.pi)) * torch.exp(-r)
@@ -34,16 +31,8 @@ class H2PlusPinnBenchmark:
         model.eval() # Set to evaluation mode
         
         with torch.no_grad():
-            # Run prediction using the model's specific ansatz/forward pass
-            # Note: We assume model has a method or logic for its ansatz.
-            # If your ansatz is external, pass the ansatz function here instead of model.
-            
-            # Recreating the ansatz logic here for safety:
             r = torch.sqrt(torch.sum(self.test_pts**2, dim=1, keepdim=True) + 1e-8)
             nn_out = model(self.test_pts)
-            # Assuming the model returns raw NN output and we apply ansatz:
-            # If your model.forward() ALREADY applies exp(-r), just use: psi_pred = model(self.test_pts)
-            # based on your previous code, let's assume forward() is just the NN:
             psi_pred = torch.exp(-r) * nn_out
             
             # --- METRIC 1: Relative L2 Error ---

@@ -97,7 +97,6 @@ def physics_loss(model, x):
     # Potential Energy (-1/r), x is a tensor that contains (x,y,z) coordinates
     r = torch.sqrt(x[:, 0:1]**2 + x[:, 1:2]**2 + x[:, 2:3]**2 + 1e-6)
     potential = -1.0 / r
-    
     # Residual:(H - E)Psi = 0
     residual = (kinetic + potential * psi) - (model.E * psi)
     loss_pde = torch.mean(residual**2)
