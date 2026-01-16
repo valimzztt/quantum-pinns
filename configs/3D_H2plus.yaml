@@ -1,6 +1,6 @@
 use_case: 3D_H2plus
 training:
-  epochs: 2000
+  epochs: 5000
   n_collocation: 10000     # N_f
   learning_rate: 0.0001
   save_interval: 1000   
@@ -34,7 +34,7 @@ physics:
 loss_weights:
   pde: 1.0
   normalization: 0.001     # w_norm
-  energy_constraint: 0.0005 # w_energy
+  energy_constraint: 0.01 # w_energy
 
 name_variables: ['x','y','z']
 name_components: ['wavefunc^2']

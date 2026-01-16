@@ -219,7 +219,7 @@ if __name__ == "__main__":
     plt.figure(figsize=(10, 6))
     plt.plot(history["total"], label='Total Loss', color='black', linewidth=2)
     plt.plot(history["pde"], label='PDE Loss', linestyle='--', color='blue', alpha=0.7)
-    plt.plot(history["loss_energy"], label='Energy loss', linestyle='-.', color='cyan')
+    #plt.plot(-history["loss_energy"], label='Energy loss', linestyle='-.', color='cyan')
     plt.plot(history["norm"], label='Norm Loss', linestyle='--', color='orange', alpha=0.7)
     plt.xlabel('Epochs', fontsize=14)
     plt.ylabel('Loss', fontsize=14)
