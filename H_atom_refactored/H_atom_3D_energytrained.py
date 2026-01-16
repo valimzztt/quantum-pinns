@@ -91,7 +91,7 @@ class HydrogenPINN3D(nn.Module):
         return ansatz * (1.0 + self.net(x))
 
 box_volume = (L_max - L_min)**3 
-N_norm = 1000 
+N_norm = 50000 
 
 # The loss function is defined
 def physics_loss(model, x):
@@ -111,13 +111,13 @@ def physics_loss(model, x):
     
     # Residual: (H - E)Psi = 0
     residual = (kinetic + potential * psi) - (model.E * psi)
-    
+    loss_pde = torch.mean(residual**2)
     # Point anchoring 
     if normalization == "Point_Anchoring":
         center_point = torch.zeros(1, 3)
         psi_center = model(center_point)
         # value of origin for 1s orbital isapprox 0.564
-        norm_loss = (psi_center - 0.564)**2 
+        loss_norm  = (psi_center - 0.564)**2 
     else: 
         # Should this be inside or outside of the loop
         x_norm = (torch.rand(N_norm, 3, device=device) * (L_max - L_min)) + L_min
@@ -125,15 +125,15 @@ def physics_loss(model, x):
         psi_norm = model(x_norm)
         # Monte Carlo Integral, which Volume*mn(Psi^2)
         integral_approx = box_volume*torch.mean(psi_norm**2)
-        norm_loss = (integral_approx - 1.0)**2
-
-    return torch.mean(residual**2) + norm_loss
+        loss_norm = (integral_approx - 1.0)**2
+    total_loss = loss_pde + w_norm*loss_norm
+    return total_loss, loss_pde, loss_norm
 
 
 def train(N_f, epochs):
     print(f"\nTraining with N_f = {N_f} points")
     print(f"Sampling Strategy: {sampling_strategy} ---")
-    
+    loss_history = {"total": [], "pde": [], "norm": [], "energy": []}
     model = HydrogenPINN3D(width=num_dense_nodes, depth=num_dense_layers).to('cpu')
     optimizer = optim.Adam(model.parameters(), lr=lr)
     for epoch in range(epochs + 1):
@@ -149,21 +149,29 @@ def train(N_f, epochs):
             # The default is a standard Pseudo-Random Uniform Sampling
             inputs = (torch.rand(N_f, 3) * 10.0 - 5.0).float().requires_grad_(True)
             
-        loss = physics_loss(model, inputs)
+        loss, pde_val, norm_val = physics_loss(model, inputs)
         loss.backward()
         optimizer.step()
+        # Let´s store all losses so that we can plot them
+        loss_history["total"].append(loss.item())
+        loss_history["pde"].append(pde_val.item())
+        loss_history["norm"].append(norm_val.item())
+        loss_history["energy"].append(model.E.item())
+
         
         if epoch % 500 == 0:
             print(f"Epoch {epoch}: Loss={loss.item():.5f}, Energy={model.E.item():.4f}")
 
-    return model
+    return model, loss_history
 
 if __name__ == "__main__":
     print(f"Initial Memory: {get_memory_usage():.2f} MB")
+    initial_memory = get_memory_usage()
     start_time = time.time()
     N_f_label =  "N_f= " + str(N_f)
-    model_trained = train(N_f=N_f, epochs=epochs)
-
+    model_trained, history = train(N_f=N_f, epochs=epochs)
+    memory_used  = get_memory_usage() - initial_memory 
+    print(f"Memory used: {memory_used:.2f} MB")
     z_vals = np.linspace(-5, 5, 200)
     #input tensor: x=0, y=0, z varies
     inputs = np.zeros((200, 3))
@@ -178,6 +186,22 @@ if __name__ == "__main__":
     r_vals = np.abs(z_vals)     # r = |z| along the z-axis
     psi_exact = (1.0 / np.sqrt(np.pi)) * np.exp(-r_vals)
     prob_density_exact = psi_exact**2
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(history["total"], label='Total Loss', color='black', linewidth=2)
+    plt.plot(history["pde"], label='PDE Loss', linestyle='--', color='blue', alpha=0.7)
+    plt.plot(history["norm"], label='Norm Loss', linestyle='--', color='orange', alpha=0.7)
+    
+    plt.xlabel('Epochs', fontsize=14)
+    plt.ylabel('Loss', fontsize=14)
+    plt.yscale('log') # Use Log scale to see differences clearly
+    plt.title('Training Loss Components', fontsize=16)
+    plt.legend(fontsize=12)
+    plt.grid(True, which="both", ls="-", alpha=0.2)
+    plt.tight_layout()
+    plt.show()
+
+
     plt.figure(figsize=(6, 5))
     plt.semilogy(z_vals, prob_density_sim, label='Simulation', linewidth=3, alpha=0.8)
     plt.semilogy(z_vals, prob_density_exact, '--', label='Analytical', linewidth=3)

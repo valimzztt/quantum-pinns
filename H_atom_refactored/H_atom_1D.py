@@ -92,17 +92,16 @@ E = torch.tensor([E_init], dtype=torch.float32, device=device, requires_grad=Tru
 # We update the Optimizer for the Neural Network weights only
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 R_max = 20.0 # 
-eps = 1e-5   # We add this small shift to avoid div by zero
+eps = 1e-5   # avoid div by zero
 
 def u_ansatz(r):
     """
-    We define the improved Ansatz: R(r) = r * e^(-r) * NN(r)
+    We define the Ansatz: R(r) = r*e^(-r)*NN(r)
     1. 'r' handles the cusp at the nucleus (u(0)=0).
     2. 'e^(-r)' handles the decay at infinity.
-    3. The NN learns the deviation (which is just a constant for 1s).
+    3. The NN learns the deviation(which is just a constant for 1s).
     """
     nn_out = model(r)
-    # We explicitly encode the asymptotic behavior
     return r * torch.exp(-r) * nn_out
 
 def get_derivatives(r):
@@ -147,7 +146,6 @@ for epoch in range(epochs):
         # This basically bunches the poin near r=0 while keeping the "smoothness" of Hammersley
         # Formula: r = sigma * sqrt(2) * erfinv(u)
         sigma = 2.5 # spread
-        # We clamp u to avoid infinity at u=1.0
         u_tensor = torch.clamp(u_tensor, min=0.0, max=0.999999)
         r_c = sigma * torch.sqrt(torch.tensor(2.0)) * torch.erfinv(u_tensor)
         r_c = torch.clamp(r_c, min=eps, max=R_max)
@@ -155,12 +153,11 @@ for epoch in range(epochs):
         # let´s call this smart sampling
         # We make the split dependent on R_max
         split_point = R_max * split_ratio
-        # We clamp the point to 5 in case of an R_max which is too large
         split_point = max(split_point, 5.0)
         split_point = min(split_point, R_max - 0.1) # just for safety
         # 50% of points in the "Near" region
         r_near = (split_point - eps) * torch.rand(N_f // 2, 1, device=device) + eps
-        # 50% of points in the "Far" region
+        # 50% of points in the"Far" region
         r_far = (R_max - split_point) * torch.rand(N_f // 2, 1, device=device) + split_point
         r_c = torch.cat([r_near, r_far], dim=0)
 

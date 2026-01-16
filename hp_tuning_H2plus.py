@@ -15,7 +15,8 @@ parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 from utils.filemanager import load_config
 from  utils.memory_usage import get_memory_usage
-
+import deepxde as ddp
+model = ddp.Model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device} for H2+ (3D)")
 # We store the data in YAML files so that it will be easier to track the different parameters 

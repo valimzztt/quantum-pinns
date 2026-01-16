@@ -1,8 +1,8 @@
 use_case: 3D_H2plus
 training:
-  epochs: 5000
+  epochs: 2000
   n_collocation: 10000     # N_f
-  learning_rate: 0.001
+  learning_rate: 0.0001
   save_interval: 1000   
   num_variables: 1
   num_components: 1
@@ -12,7 +12,7 @@ training:
   decay: inverse time
   decay_steps: 500
   decay_rate: 0.5
-  num_dense_layers: 3
+  num_dense_layers: 2
   num_dense_nodes: 64
   activation: tanh
   out_dir: output
@@ -28,13 +28,13 @@ physics:
   R_dist: 1.0             # Internuclear distance (2 * Z_pos)
   E_init: -0.6            # Initial energy guess
   E_ref: -1.1  
-  L_min: -10.0
-  L_max: 10.0 # define the computational domain the same way Paolo did
+  L_min: -5.0
+  L_max: 5.0 # define the computational domain the same way Paolo did
 
 loss_weights:
   pde: 1.0
-  normalization: 10.0     # w_norm
-  energy_constraint: 10.0 # w_energy
+  normalization: 0.001     # w_norm
+  energy_constraint: 0.0005 # w_energy
 
 name_variables: ['x','y','z']
 name_components: ['wavefunc^2']

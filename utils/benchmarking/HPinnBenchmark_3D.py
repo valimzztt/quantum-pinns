@@ -1,7 +1,19 @@
 import torch
 import numpy as np
+import os
+import sys 
 
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+basedir = os.getcwd()
+sys.path.append(basedir)
+from utils.filemanager import load_config
 
+# We store the data in YAML files so that it will be easier to track the different parameters 
+filepath = os.path.join(basedir, "configs", "3D_H_atom.yaml")
+config = load_config(path=filepath)
+# Retrieve all the info from YAML file
+E_ref= config['physics']['E_ref']
 class HPinnBenchmark3D:
     def __init__(self, device='cpu', n_test=50000, box_size=10.0):
         self.device = device
@@ -37,7 +49,7 @@ class HPinnBenchmark3D:
             l2_error = torch.norm(error_vec, p=2) / self.norm_exact
             # Metric 2: Energy Error
             e_pred = model.E.item()
-            e_error = abs(e_pred - (-0.5)) # -0.5 known groundstate energy
+            e_error = abs(e_pred - (E_ref)) # E_ref is the known groundstate energy
             return {
                 "L2_Error_Psi": l2_error.item(),
                 "Abs_Error_E": e_error,

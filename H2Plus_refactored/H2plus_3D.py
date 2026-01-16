@@ -35,22 +35,6 @@ initializer = config['training']['initializer']
 L_max= config['physics']['L_max']
 L_min= config['physics']['L_min']
 
-# This is the old PINNN
-class PINN_H2_3D(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(3, 64),
-            nn.Tanh(),
-            nn.Linear(64, 64),
-            nn.Tanh(),
-            nn.Linear(64, 1)
-        )
-        self.E_history = []
-
-    def forward(self, x):
-        return self.net(x)
-
 class H2PlusPINN3D(nn.Module):
     def __init__(self, width=num_dense_nodes, depth=num_dense_layers):
         super().__init__()
@@ -138,7 +122,7 @@ def physics_loss(model, x, y, z, epoch):
 
     # Norm Penalty
     volume = (L_max -L_min)**3  
-    n_norm = 2000 
+    n_norm = 10000 # increase this value if not variance is too large
     x_u =(torch.rand(n_norm, 1, device=x.device)*(L_max - L_min))+L_min
     y_u =(torch.rand(n_norm, 1, device=x.device)*(L_max - L_min))+L_min
     z_u =(torch.rand(n_norm, 1, device=x.device)*(L_max - L_min))+L_min
@@ -146,19 +130,20 @@ def physics_loss(model, x, y, z, epoch):
     psi_u = psi_trial(model, x_u, y_u, z_u)
     # Monte Carlo Integral: V*Mean(psi^2)
     integral=volume*torch.mean(psi_u**2)
-    if epoch % 100  == 0:print(integral)
     loss_norm = (integral - 1.0)**2
-    
     # Energy Constraint
-    loss_energy = torch.relu(model.E - E_ref)  
-    if epoch == 2000: current_w_energy = 0.0 
-    loss = loss_pde + w_norm*loss_norm + current_w_energy * loss_energy
-    return loss 
+    loss_energy = model.E
+    #loss_energy = torch.relu(model.E - E_ref)  
+    if epoch % 100 == 0: print('loss_pde', loss_pde, 'loss_norm', loss_norm, 'loss_energy', loss_energy)
+
+    total_loss = loss_pde + w_norm*loss_norm + w_energy*loss_energy
+    return total_loss, loss_pde, loss_norm, loss_energy
+
 
 def train_3D(model, N_f, epochs):
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     print(f"\n Training 3D H2+ (N={N_f}) ---")
-
+    loss_history = {"total": [], "pde": [], "norm": [], "loss_energy": [], "energy": []}
     for epoch in range(epochs + 1):
         optimizer.zero_grad()
         # CHANGE 3: Sampling in 3D Box
@@ -168,16 +153,21 @@ def train_3D(model, N_f, epochs):
         y = torch.randn(N_f, 1, device=device) * 2.0
         z = torch.randn(N_f, 1, device=device) * 3.0 # Elongated along Z axis
         
-        loss = physics_loss(model, x, y, z, epoch)
+        loss, loss_pde, loss_norm,  loss_energy = physics_loss(model, x, y, z, epoch) # loss is the total loss
         loss.backward()
         optimizer.step()
-        
+        # Let´s store all losses so that we can plot them
+        loss_history["total"].append(loss.item())
+        loss_history["pde"].append(loss_pde.item())
+        loss_history["norm"].append(loss_norm.item())
+        loss_history["loss_energy"].append(loss_energy.item())
+        loss_history["energy"].append(model.E.item())
         model.E_history.append(model.E.item())
         
         if epoch % 500 == 0:
             print(f"Ep {epoch} | Loss: {loss.item():.4f} | E: {model.E.item():.4f}")
 
-    return model
+    return model, loss_history
 
 def get_3d_normalization_factor(model, func_type="sim", n_samples=100000):
     """
@@ -205,20 +195,56 @@ def get_3d_normalization_factor(model, func_type="sim", n_samples=100000):
 
 if __name__ == "__main__":
     print(f"Initial Memory: {get_memory_usage():.2f} MB")
+    initial_memory = get_memory_usage()
     start_time = time.time()
     N_f_label = "N_f= " + str(N_f)
-    
     # Initialize the correct class
     model = H2PlusPINN3D(width=num_dense_nodes, depth=num_dense_layers).to(device)
-    
     # Train
-    model_trained = train_3D(model, N_f=N_f, epochs=epochs)
-    
+    model_trained, history = train_3D(model, N_f=N_f, epochs=epochs)
+    memory_used  = get_memory_usage() - initial_memory 
+    print(f"Memory used: {memory_used:.2f} MB")
+    memory_used  = get_memory_usage() - initial_memory 
+    print(f"Memory used: {memory_used:.2f} MB")
     print(f"Time: {time.time() - start_time:.2f}s")
-    print("Calculating 3D Normalization Factors...")
+    axis_vals = np.linspace(L_min, L_max, 400)
+    z_t = torch.tensor(axis_vals, dtype=torch.float32, device=device).view(-1, 1)
+    x_t = torch.zeros_like(z_t)
+    y_t = torch.zeros_like(z_t)
+    with torch.no_grad():
+        psi_pred_raw = psi_trial(model_trained, x_t, y_t, z_t).cpu().numpy().flatten()
+    prob_density_raw = psi_pred_raw**2     # probability density
+
+    # First plot the history of the losses
+    plt.figure(figsize=(10, 6))
+    plt.plot(history["total"], label='Total Loss', color='black', linewidth=2)
+    plt.plot(history["pde"], label='PDE Loss', linestyle='--', color='blue', alpha=0.7)
+    plt.plot(history["loss_energy"], label='Energy loss', linestyle='-.', color='cyan')
+    plt.plot(history["norm"], label='Norm Loss', linestyle='--', color='orange', alpha=0.7)
+    plt.xlabel('Epochs', fontsize=14)
+    plt.ylabel('Loss', fontsize=14)
+    plt.yscale('log') # Use Log scale to see differences clearly
+    plt.title('Training Loss Components', fontsize=16)
+    plt.legend(fontsize=12)
+    plt.grid(True, which="both", ls="-", alpha=0.2)
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(8, 6))
+    plt.plot(axis_vals, psi_pred_raw**2, color='#4472C4', linewidth=3, 
+             label='3D Simulation')
+    plt.xlabel(r'$\boldsymbol{x \ [a_0]}$', fontsize=16)
+    plt.ylabel(r'$\boldsymbol{\Psi^2 \ [a_0^{-3}]}$', fontsize=16)
+    plt.title(f'3D Result for R={Z_pos:.0f}', fontsize=14)
     
-    # FIX: Pass the trained model to the normalization function
-    norm_sim = get_3d_normalization_factor(model_trained, "sim")
+    plt.xlim(-10, 10)
+    plt.ylim(0, 0.25) 
+    plt.legend(loc='upper right', fontsize=12)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+    """ norm_sim = get_3d_normalization_factor(model_trained, "sim")
     norm_ref = get_3d_normalization_factor(model_trained, "ref")
     
     # ... (Plotting code remains the same, just ensure psi_trial calls use model_trained) ...
@@ -248,4 +274,4 @@ if __name__ == "__main__":
     plt.legend(loc='upper right', fontsize=12)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.show()
+    plt.show() """

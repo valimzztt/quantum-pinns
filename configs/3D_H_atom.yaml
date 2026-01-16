@@ -1,6 +1,6 @@
 use_case: 3D_H_atom
 training:
-  epochs: 2000
+  epochs: 5000
   n_collocation: 3000     # N_f
   learning_rate: 0.001
   save_interval: 1000  
@@ -28,15 +28,11 @@ physics:
   n_quantum: 1
   l_quantum: 0
   m_quantum:
-  L_min: -10.0
-  L_max: 10.0 # define the computational domain the same way Paolo did
+  L_min: -5.0
+  L_max: 5.0 # define the computational domain the same way Paolo did
 
 
 loss_weights:
   pde: 1.0
-  normalization: 10.0     # w_norm
-  energy_constraint: 100.0 # w_energy
-
-name_variables: ['r']
-name_components: ['wavefunc^2']
-show_psi_squared: True
+  normalization: 0.01     # w_norm
+  energy_constraint: 0.0 # w_energy
